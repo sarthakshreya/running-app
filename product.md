@@ -77,6 +77,7 @@ The current release covers the core post-run debrief loop. The roadmap includes:
 
 - **Trend analysis** — HRV trajectory, pace progression, training load over weeks and months
 - **Race readiness scoring** — aggregate recovery, recent load, and sleep debt into a pre-race signal
+- **Depth-2 contextual analysis** — today's analysis connects recovery score to run performance. The next layer connects *why* the recovery score was what it was: alcohol the night before, poor sleep stage distribution, high stress logged in Whoop's journal. The data is already stored in the backend — the analysis just needs to go one level deeper.
 - **Whoop in-app data** — VO2 max, biological age, and pace of aging when Whoop makes these exportable
 - **Multi-sport support** — extending the pipeline beyond running to cycling and strength sessions
 
