@@ -49,7 +49,10 @@ _REPORT_PATH = Path("reports/2026-01-27.md")
 #   p_report           = process_run.report.generate
 
 
-def _patches(strava=_STRAVA, whoop_result=_WHOOP, weather_result=_WEATHER, whoop_activity=None):
+_WHOOP_ACTIVITY = {"activity_strain": 13.5, "avg_hr_bpm": 150}
+
+
+def _patches(strava=_STRAVA, whoop_result=_WHOOP, weather_result=_WEATHER, whoop_activity=_WHOOP_ACTIVITY):
     return (
         patch("process_run.extract.extract", return_value=strava),
         patch(
@@ -137,15 +140,25 @@ class TestRun:
         with p_ex, p_wa, p_wh, p_we, p_re as m:
             run("2026-01-27")
         m.assert_called_once_with(
-            "2026-01-27", _STRAVA, _WHOOP, _WEATHER, whoop_activity=None
+            "2026-01-27", _STRAVA, _WHOOP, _WEATHER, whoop_activity=_WHOOP_ACTIVITY
         )
 
-    def test_whoop_activity_passed_when_present(self):
+    def test_whoop_activity_passed_to_report(self):
         activity = {"activity_strain": 14.6, "avg_hr_bpm": 150}
         p_ex, p_wa, p_wh, p_we, p_re = _patches(whoop_activity=activity)
         with p_ex, p_wa, p_wh, p_we, p_re as m:
             run("2026-01-27")
         assert m.call_args.kwargs["whoop_activity"] == activity
+
+    def test_whoop_activity_file_not_found_propagates(self):
+        p_ex, p_wa, p_wh, p_we, p_re = _patches()
+        p_wa = patch(
+            "process_run.extract_whoop_activity.extract_whoop_activity",
+            side_effect=FileNotFoundError("no whoop screenshots"),
+        )
+        with p_ex, p_wa, p_wh, p_we, p_re:
+            with pytest.raises(FileNotFoundError, match="no whoop screenshots"):
+                run("2026-01-27")
 
     def test_whoop_none_passed_to_report_when_no_match(self):
         p_ex, p_wa, p_wh, p_we, p_re = _patches(whoop_result=None)

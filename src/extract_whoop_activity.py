@@ -17,23 +17,23 @@ load_dotenv(ROOT / ".env")
 log = logging.getLogger(__name__)
 
 
-def extract_whoop_activity(date: str) -> dict | None:
+def extract_whoop_activity(date: str) -> dict:
     """Extract Whoop activity metrics from screenshots for the given date.
 
     Looks for screenshots in data/runs/YYYY-MM-DD/whoop/.
-    Returns None if the whoop/ subfolder doesn't exist (Whoop screenshots
-    are optional — the pipeline continues without them).
 
     Args:
         date: ISO date string, e.g. "2026-01-30"
 
     Returns:
-        dict of activity metrics, or None if no Whoop screenshots present
+        dict of activity metrics
+
+    Raises:
+        FileNotFoundError: if the whoop/ subfolder or screenshots are missing
     """
     whoop_dir = DATA_DIR / "runs" / date / "whoop"
     if not whoop_dir.exists():
-        log.info("No Whoop activity screenshots found at %s — skipping", whoop_dir)
-        return None
+        raise FileNotFoundError(f"Whoop activity screenshots not found: {whoop_dir}")
 
     images = _load_images(whoop_dir)
     log.info("Loaded %d Whoop screenshot(s) from %s", len(images), whoop_dir)

@@ -36,7 +36,7 @@ def run(date: str) -> Path:
 
     Steps:
       1. Extract Strava run metrics from screenshots
-      2. Extract Whoop activity metrics from screenshots (optional)
+      2. Extract Whoop activity metrics from screenshots (required)
       3. Match last-known Whoop recovery/sleep data from CSV export
       4. Fetch weather conditions at run time and location
       5. Generate and write the markdown report
@@ -48,7 +48,7 @@ def run(date: str) -> Path:
         Path to the generated report
 
     Raises:
-        FileNotFoundError: if Strava screenshots are missing
+        FileNotFoundError: if Strava or Whoop screenshots are missing
         ValueError: if no location can be determined for weather
     """
     # 1. Strava
@@ -61,17 +61,14 @@ def run(date: str) -> Path:
         strava.get("avg_hr_bpm") or "—",
     )
 
-    # 2. Whoop activity screenshots (optional — no crash if absent)
+    # 2. Whoop activity screenshots (required)
     log.info("[2/5] Extracting Whoop activity screenshots...")
     whoop_activity = extract_whoop_activity.extract_whoop_activity(date)
-    if whoop_activity:
-        log.info(
-            "      Strain %s | Avg HR %s bpm",
-            whoop_activity.get("activity_strain"),
-            whoop_activity.get("avg_hr_bpm"),
-        )
-    else:
-        log.info("      No Whoop activity screenshots — skipping")
+    log.info(
+        "      Strain %s | Avg HR %s bpm",
+        whoop_activity.get("activity_strain"),
+        whoop_activity.get("avg_hr_bpm"),
+    )
 
     # 3. Whoop CSV — last-known recovery context; non-fatal if export is missing/stale
     log.info("[3/5] Matching last-known Whoop recovery data...")
