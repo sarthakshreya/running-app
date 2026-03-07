@@ -24,7 +24,7 @@ Running Intelligence fixes that.
 
 ### What It Does
 
-Running Intelligence is a personal post-run analysis pipeline that ingests data from three sources — **Strava** (performance), **Whoop** (biometrics), and **Open-Meteo** (weather) — and produces a single, structured markdown report for every run. No dashboards. No subscriptions. No data uploaded to a third party. Just a clean, honest debrief written for you, about you.
+Running Intelligence is a personal post-run analysis pipeline that ingests data from three sources — **Strava** (performance), **Whoop** (biometrics), and **Open-Meteo** (weather) — and produces a single, structured markdown report for every run. All data is stored in a local Supabase database for trend queries and future analysis. No third-party dashboards. No subscriptions. Your data never leaves your machine except to call the Anthropic API for analysis.
 
 Each report covers:
 
@@ -59,7 +59,11 @@ This tool is for you.
 
 **Historical bulk sync.** Drop in a full Strava data dump and generate reports for your entire running history — with per-kilometre GPX splits, matched Whoop recovery data, and historically accurate weather for every run going back years.
 
-**Zero cloud dependency.** All data stays local. No account required. No API keys for weather. No third-party integrations. Your health data does not leave your machine except to call the Anthropic API for analysis.
+**Structured local database.** Every run, split, weather observation, Whoop recovery cycle, sleep session, workout, and journal entry is stored in a self-hosted Supabase instance. The `run_summary` view joins all of them in a single query. The `journal_context` view surfaces lifestyle factors — alcohol, stress, sleep aids — ready to correlate with performance.
+
+**Full Whoop history import.** Four Whoop CSV exports (`physiological_cycles`, `sleeps`, `workouts`, `journal_entries`) decompose into five logical tables, preserving nap sessions, per-workout HR zones, and the complete EAV journal history. Re-import anytime you refresh your export — all writes are idempotent.
+
+**Zero cloud dependency.** All data stays local. No account required. No API keys for weather. No third-party integrations beyond the Anthropic API for report generation.
 
 ---
 
@@ -67,19 +71,19 @@ This tool is for you.
 
 The convergence of wearable biometrics, GPS running data, and large language models makes this possible in a way it simply wasn't two years ago. The data has existed for a decade. The ability to synthesise it into coherent, personalised narrative — without a human analyst — is new.
 
-Running Intelligence is the first tool to connect these three streams in a way that produces something a runner actually wants to read the moment they walk through the door.
+Running Intelligence is the first tool to connect these three streams in a way that produces something a runner actually wants to read the moment they walk through the door. And with a structured database underneath, every report is also a queryable data point in an ever-growing personal training record.
 
 ---
 
 ### What's Next
 
-The current release covers the core post-run debrief loop. The roadmap includes:
+The core debrief loop and data backend are complete. The roadmap builds on top of them:
 
-- **Trend analysis** — HRV trajectory, pace progression, training load over weeks and months
-- **Race readiness scoring** — aggregate recovery, recent load, and sleep debt into a pre-race signal
-- **Depth-2 contextual analysis** — today's analysis connects recovery score to run performance. The next layer connects *why* the recovery score was what it was: alcohol the night before, poor sleep stage distribution, high stress logged in Whoop's journal. The data is already stored in the backend — the analysis just needs to go one level deeper.
-- **Whoop in-app data** — VO2 max, biological age, and pace of aging when Whoop makes these exportable
-- **Multi-sport support** — extending the pipeline beyond running to cycling and strength sessions
+- **Trend analysis** — HRV trajectory, pace progression, training load over weeks and months. The `run_summary` view is already queryable; this is a reporting layer on top.
+- **Race readiness scoring** — aggregate recovery, recent load, and sleep debt into a single pre-race signal.
+- **Depth-2 contextual analysis** — today's analysis connects recovery score to run performance. The next layer connects *why* the recovery score was what it was: alcohol the night before (already captured in `journal_context`), poor sleep stage distribution (in `whoop_sleep_summary`), high stress logged in Whoop's journal. The data is in the database — the analysis just needs to go one level deeper.
+- **Whoop in-app data** — VO2 max, biological age, and pace of aging when Whoop makes these exportable.
+- **Multi-sport support** — extending the pipeline beyond running to cycling and strength sessions.
 
 ---
 

@@ -2,12 +2,12 @@
 
 ## Overview
 
-Two entry points, one shared pipeline core. The **per-run pipeline** (`process_run.py`) handles a single date using screenshots. The **bulk sync** (`bulk_sync.py`) processes a full Strava data dump historically. Both converge on the same `report.generate()` call.
+Two entry points, one shared pipeline core. The **per-run pipeline** (`process_run.py`) handles a single date using screenshots. The **bulk sync** (`bulk_sync.py`) processes a full Strava data dump historically. Both converge on the same `report.generate()` call and then write all structured data to Supabase via `db.py`.
 
 ```
                         ┌─────────────────────────────────┐
   Single run            │         process_run.py           │
-  (screenshots)  ──────▶│  orchestrates steps 1–5          │
+  (screenshots)  ──────▶│  orchestrates steps 1–6          │
                         └────────────┬────────────────────┘
                                      │
                         ┌────────────▼────────────────────┐
@@ -18,15 +18,25 @@ Two entry points, one shared pipeline core. The **per-run pipeline** (`process_r
                     ┌────────────────▼──────────────────────┐
                     │            Shared core                 │
                     │  whoop.match() → weather.fetch()       │
-                    │            → report.generate()         │
+                    │    → report.generate() → db.upsert()   │
                     └───────────────────────────────────────┘
+                                     │
+                        ┌────────────▼────────────────────┐
+  Whoop CSV import      │        whoop_import.py           │
+  (one-time / refresh)  │  4 CSVs → 5 Whoop tables        │
+                        └────────────┬────────────────────┘
+                                     │
+                        ┌────────────▼────────────────────┐
+                        │    Self-hosted Supabase          │
+                        │    (supabase/docker/)            │
+                        └─────────────────────────────────┘
 ```
 
 ---
 
 ## Per-run pipeline (`process_run.py`)
 
-Five sequential steps. Steps 2 and 3 are non-fatal if data is absent.
+Six sequential steps. Step 3 is non-fatal if data is absent; step 6 (DB) is non-fatal so a Supabase outage never blocks report generation.
 
 ```
 Step 1  extract.extract(date)
@@ -34,7 +44,7 @@ Step 1  extract.extract(date)
 
 Step 2  extract_whoop_activity.extract_whoop_activity(date)
         └─ Vision (Claude): data/runs/YYYY-MM-DD/whoop/*.png → whoop_activity dict
-        └─ Raises FileNotFoundError if whoop/ folder absent (mandatory)
+        └─ Raises FileNotFoundError if whoop/ folder absent (required)
 
 Step 3  whoop.match(date)
         └─ CSV parse: data/whoop/physiological_cycles.csv → whoop dict
@@ -48,6 +58,10 @@ Step 4  weather.fetch(date, location, run_time)
 Step 5  report.generate(date, strava, whoop, weather, whoop_activity)
         └─ Claude (claude-opus-4-6): merges all data → markdown
         └─ Writes to reports/YYYY-MM-DD.md
+
+Step 6  db.upsert_run / upsert_whoop_activity / upsert_weather / upsert_report
+        └─ Writes all structured data to Supabase (non-fatal)
+        └─ All upserts are idempotent — safe to re-run
 ```
 
 ---
@@ -63,12 +77,59 @@ strava_import.load_runs(dump_dir)
 └─ Extract GPX start lat/lon → used for precise weather fetch
 
 For each run:
-  whoop.match(date)          — same as per-run pipeline (non-fatal)
+  whoop.match(date)            — same as per-run pipeline (non-fatal)
   weather.fetch(..., lat, lon) — uses GPS coords directly, no geocoding
-  report.generate(...)       — same as per-run pipeline
+  report.generate(...)         — same as per-run pipeline
+  db.upsert_run(...)           — writes run + splits + weather + report to Supabase
+                                 passes strava_activity_id, start_lat, start_lon
 
 Side effect: writes data/strava/runs.json (all runs, always)
 ```
+
+---
+
+## Whoop CSV import (`whoop_import.py`)
+
+One-time import (re-run whenever you refresh your Whoop export). Reads from `data/whoop/` and populates five Supabase tables. After import, backfills `runs.whoop_cycle_id` using last-known-cycle matching.
+
+```
+physiological_cycles.csv  →  whoop_cycles (upsert by cycle_date)
+                           →  whoop_sleep_summary (upsert by cycle_id)
+
+sleeps.csv                 →  whoop_sleep_sessions (truncate + refill)
+
+workouts.csv               →  whoop_workouts (truncate + refill)
+
+journal_entries.csv        →  whoop_journal_entries (batch upsert, deduped)
+                              ~30k EAV rows; page_size=500 via execute_values
+
+backfill_run_cycle_ids()   →  UPDATE runs SET whoop_cycle_id = best match
+                              Links each run to its nearest preceding cycle
+```
+
+---
+
+## Database (`supabase/docker/` + `supabase/schema.sql`)
+
+Self-hosted Supabase running via Docker Compose. Postgres accessible via Supavisor on `localhost:5432`. Connection string in `.env` as `SUPABASE_DB_URL`.
+
+**Whoop tables** (spine: `whoop_cycles`)
+- `whoop_cycles` — one row per calendar day; recovery, HRV, strain, biometrics
+- `whoop_sleep_summary` — primary sleep block per cycle (one-to-one)
+- `whoop_sleep_sessions` — individual sleep events and naps (one-to-many)
+- `whoop_workouts` — all Whoop-tracked activities across all sport types
+- `whoop_journal_entries` — EAV: one row per (cycle, question)
+
+**Run tables** (spine: `runs`)
+- `runs` — one row per run; FKs to `whoop_cycles` for last-known recovery context
+- `splits` — per-km child rows (CASCADE delete)
+- `run_whoop_activity` — activity-specific Whoop metrics from in-app screenshots
+- `weather_observations` — Open-Meteo data at GPS start point and run hour
+- `reports` — generated markdown text
+
+**Views**
+- `run_summary` — joins all run tables; primary query surface for analysis
+- `journal_context` — pivots EAV journal entries to columns (consumed_alcohol, felt_stressed, etc.) for depth-2 analysis
 
 ---
 
@@ -83,7 +144,7 @@ Side effect: writes data/strava/runs.json (all runs, always)
 ### `extract_whoop_activity.py`
 - Input: `data/runs/YYYY-MM-DD/whoop/`
 - Model: `claude-opus-4-6`, max_tokens=512
-- Output fields: `activity_strain`, `duration_min`, `avg_hr_bpm`, `max_hr_bpm`, `calories_kcal`, `hr_zone_1_pct`–`hr_zone_5_pct`, `activity_name`
+- Output fields: `activity_strain`, `duration_min`, `avg_hr_bpm`, `max_hr_bpm`, `calories_kcal`, `kilojoules`, `percent_hr_recorded`, `hr_zone_1_pct`–`hr_zone_5_pct`, `hr_zone_1_min`–`hr_zone_5_min`, `spo2_avg_pct`, `skin_temp_celsius`, `respiratory_rate_rpm`
 - Raises `FileNotFoundError` if `whoop/` folder is absent
 
 ### `whoop.py`
@@ -99,10 +160,19 @@ Side effect: writes data/strava/runs.json (all runs, always)
 - Output fields: `location`, `latitude`, `longitude`, `date`, `hour`, `temperature_c`, `feels_like_c`, `humidity_pct`, `wind_speed_kmh`, `wind_direction_deg`, `precipitation_mm`, `weather_code`, `weather_description`
 
 ### `report.py`
-- Model: `claude-opus-4-6`, max_tokens=4096
+- Model: `claude-opus-4-6`, max_tokens=2048
 - Prompt: `prompts/report.md` (6-section template: Summary, Conditions, Body Status, Performance, Analysis, Takeaways)
 - `_build_user_message()` serialises all four data sources as JSON into the user turn
 - Writes to `reports/YYYY-MM-DD.md`, overwriting if exists
+
+### `db.py`
+- Connection: `SUPABASE_DB_URL` env var → psycopg2 → Supavisor on `localhost:5432`
+- `upsert_run(date, source, strava, whoop_data, ...)` → inserts/updates `runs` + `splits`, returns `run_id` UUID
+- `upsert_whoop_activity(run_id, wa)` → inserts/updates `run_whoop_activity`
+- `upsert_weather(run_id, weather)` → inserts/updates `weather_observations`
+- `upsert_report(run_id, content)` → inserts/updates `reports`
+- All functions use `ON CONFLICT DO UPDATE` — idempotent, safe to re-run
+- Pace/duration stored as integer seconds; `_hms_to_secs()` converts "M:SS"/"H:MM:SS" on write
 
 ### `strava_import.py`
 - `load_runs(dump_dir)` → list of run dicts from `activities.csv` + GPX files
@@ -112,8 +182,14 @@ Side effect: writes data/strava/runs.json (all runs, always)
 
 ### `bulk_sync.py`
 - CLI: `python src/bulk_sync.py --dump /path/to/strava --from-date YYYY-MM-DD`
-- `--from-date` filters report generation only; all runs are always archived
-- Internal fields (`activity_id`, `start_hour`, `start_lat`, `start_lon`) are stripped before passing to `report.generate()`
+- `--from-date` filters report generation only; all runs are always archived to `data/strava/runs.json`
+- Internal fields (`activity_id`, `start_hour`, `start_lat`, `start_lon`) are stripped before passing to `report.generate()` but passed directly to `db.upsert_run()`
+
+### `whoop_import.py`
+- CLI: `python src/whoop_import.py` (reads from `data/whoop/` by default)
+- Idempotent: cycles/summaries/journal use `ON CONFLICT` upserts; sessions/workouts use TRUNCATE + refill
+- Deduplicates journal entries by `(cycle_id, question)` before batch insert (Whoop exports sometimes repeat entries)
+- Ends with `backfill_run_cycle_ids()`: updates `runs.whoop_cycle_id` and `whoop_days_stale` for all runs
 
 ---
 
@@ -130,10 +206,20 @@ data/whoop/                                            report.generate()
 Open-Meteo API ──── weather.py (HTTP) ─────────────────────── ┘    │
                                                                      ▼
                                                          reports/YYYY-MM-DD.md
-
-Strava dump/
-  activities.csv ─┐
-  activities/*.gpx ┘─ strava_import.py ── bulk_sync.py ────────────┘
+                                                                     │
+                                                              db.py (upsert)
+                                                                     │
+                                                                     ▼
+Strava dump/                                               ┌─────────────────┐
+  activities.csv ─┐                                        │  Supabase (PG)  │
+  activities/*.gpx ┘─ strava_import.py ── bulk_sync.py ───▶│  runs + splits  │
+                                                            │  weather        │
+data/whoop/*.csv ──── whoop_import.py ─────────────────────▶│  reports        │
+                                                            │  whoop_cycles   │
+                                                            │  whoop_sleep_*  │
+                                                            │  whoop_workouts │
+                                                            │  whoop_journal  │
+                                                            └─────────────────┘
 ```
 
 ---
@@ -144,8 +230,12 @@ Strava dump/
 
 **Prompts are external files.** Every Claude call loads its system prompt from `prompts/*.md`. No inline strings.
 
-**Last-known Whoop matching.** The CSV export is expensive to generate so it's refreshed infrequently. The pipeline uses the most recent available cycle (`days_stale` is surfaced in the report so the reader knows how fresh the data is).
+**Last-known Whoop matching.** The CSV export is expensive to generate so it's refreshed infrequently. The pipeline uses the most recent available cycle (`days_stale` is surfaced in the report so the reader knows how fresh the data is). The same logic runs in both the file-based `whoop.py` and the DB-based `backfill_run_cycle_ids()`.
 
-**Non-fatal degradation.** Missing Whoop CSV → report continues. Weather fetch fails → report continues. Only Strava screenshots and Whoop activity screenshots are hard requirements for `process_run.py`.
+**Non-fatal degradation.** Missing Whoop CSV → report continues. Weather fetch fails → report continues. Supabase unavailable → report still writes to disk. Only Strava screenshots and Whoop activity screenshots are hard requirements for `process_run.py`.
 
-**GPS coordinates for weather.** Both pipelines use actual GPS start coordinates (from GPX) when available, bypassing geocoding. This ensures accuracy for runs outside the user's home city.
+**GPS coordinates for weather.** Both pipelines use actual GPS start coordinates (from GPX) when available, bypassing geocoding. This ensures accuracy for runs outside the user's home city — a Singapore run gets Singapore weather even when `DEFAULT_LOCATION=London`.
+
+**Idempotent DB writes.** Every upsert uses `ON CONFLICT DO UPDATE`. Re-running the pipeline on the same date overwrites rather than duplicates. The Whoop import can be re-run after refreshing the CSV export.
+
+**Pace and duration as integer seconds.** All time-based fields are stored as integers in Postgres (`avg_pace_secs_per_km`, `duration_secs`). Display formatting happens in the application layer. The `run_summary` view exposes a pre-formatted `avg_pace_formatted` column for convenience.
