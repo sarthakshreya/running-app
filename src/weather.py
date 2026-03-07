@@ -136,18 +136,27 @@ def _fetch_hourly(lat: float, lon: float, date: str, hour: int) -> dict:
     return {var: hourly.get(var, [None] * (idx + 1))[idx] for var in _HOURLY_VARS}
 
 
-def fetch(date: str, location: str | None = None, run_time: str | None = None) -> dict:
+def fetch(
+    date: str,
+    location: str | None = None,
+    run_time: str | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> dict:
     """Fetch weather conditions for a run.
 
     Location resolution order:
-      1. `location` argument (e.g. from Strava screenshot)
-      2. DEFAULT_LAT + DEFAULT_LON env vars (skips geocoding)
-      3. DEFAULT_LOCATION env var (geocoded)
+      1. `lat` + `lon` arguments (direct coordinates, skips geocoding)
+      2. `location` argument (e.g. from Strava screenshot, geocoded)
+      3. DEFAULT_LAT + DEFAULT_LON env vars (skips geocoding)
+      4. DEFAULT_LOCATION env var (geocoded)
 
     Args:
         date:     ISO date string, e.g. "2026-01-27"
-        location: Location name visible in Strava (city/area). Optional.
+        location: Location name (city/area). Optional.
         run_time: Run start time "HH:MM" (24h). Defaults to noon.
+        lat:      Latitude (direct coordinates, takes priority over location).
+        lon:      Longitude (direct coordinates, takes priority over location).
 
     Returns:
         dict with weather conditions at run time
@@ -161,9 +170,12 @@ def fetch(date: str, location: str | None = None, run_time: str | None = None) -
     default_lon = os.getenv("DEFAULT_LON")
     default_name = os.getenv("DEFAULT_LOCATION")
 
-    lat = lon = resolved_name = None
+    resolved_name = None
 
-    if location:
+    if lat is not None and lon is not None:
+        resolved_name = f"{round(lat, 4)},{round(lon, 4)}"
+        log.debug("Using direct coordinates: %s, %s", lat, lon)
+    elif location:
         try:
             lat, lon, resolved_name = _geocode(location)
         except ValueError:
