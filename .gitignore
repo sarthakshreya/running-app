@@ -8,3 +8,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.DS_Store
+.claude/
+memory/
+supabase/docker-setup/
+supabase/docker/volumes/
+supabase/docker/.env

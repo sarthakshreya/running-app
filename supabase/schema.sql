@@ -414,11 +414,11 @@ ORDER BY r.date DESC;
 CREATE VIEW journal_context AS
 SELECT
     wc.cycle_date,
-    MAX(CASE WHEN je.question ILIKE '%alcohol%'   THEN je.answered_yes END) AS consumed_alcohol,
-    MAX(CASE WHEN je.question ILIKE '%ate well%'  THEN je.answered_yes END) AS ate_well,
-    MAX(CASE WHEN je.question ILIKE '%stress%'    THEN je.answered_yes END) AS felt_stressed,
-    MAX(CASE WHEN je.question ILIKE '%sleep aid%' THEN je.answered_yes END) AS took_sleep_aid,
-    MAX(CASE WHEN je.question ILIKE '%cannabis%'  THEN je.answered_yes END) AS consumed_cannabis,
+    BOOL_OR(CASE WHEN je.question ILIKE '%alcohol%'   THEN je.answered_yes END) AS consumed_alcohol,
+    BOOL_OR(CASE WHEN je.question ILIKE '%ate well%'  THEN je.answered_yes END) AS ate_well,
+    BOOL_OR(CASE WHEN je.question ILIKE '%stress%'    THEN je.answered_yes END) AS felt_stressed,
+    BOOL_OR(CASE WHEN je.question ILIKE '%sleep aid%' THEN je.answered_yes END) AS took_sleep_aid,
+    BOOL_OR(CASE WHEN je.question ILIKE '%cannabis%'  THEN je.answered_yes END) AS consumed_cannabis,
     JSONB_OBJECT_AGG(je.question, je.answered_yes) AS all_responses
 FROM whoop_cycles wc
 JOIN whoop_journal_entries je ON je.cycle_id = wc.id
