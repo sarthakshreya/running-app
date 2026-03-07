@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
+import db
 import report
 import strava_import
 import weather
@@ -93,6 +94,7 @@ def sync(dump_dir: Path, from_date: str | None = None) -> dict:
             log.warning("  Weather: fetch failed — %s", exc)
 
         # Report
+        report_path = None
         try:
             report_path = report.generate(date, strava, whoop_data, weather_data, whoop_activity=None)
             log.info("  Report: %s", report_path)
@@ -100,6 +102,21 @@ def sync(dump_dir: Path, from_date: str | None = None) -> dict:
         except Exception as exc:
             log.error("  Report failed: %s", exc)
             failed.append(date)
+
+        # DB write (non-fatal)
+        try:
+            run_id = db.upsert_run(
+                date, "strava_import", strava, whoop_data,
+                strava_activity_id=run.get("activity_id"),
+                start_lat=run.get("start_lat"),
+                start_lon=run.get("start_lon"),
+            )
+            if weather_data:
+                db.upsert_weather(run_id, weather_data)
+            if report_path:
+                db.upsert_report(run_id, report_path.read_text())
+        except Exception as exc:
+            log.warning("  DB write failed (non-fatal): %s", exc)
 
     return {"archived": len(runs), "reports": generated, "failed": failed}
 

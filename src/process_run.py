@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import db
 import extract
 import extract_whoop_activity
 import report
@@ -106,6 +107,18 @@ def run(date: str) -> Path:
     report_path = report.generate(
         date, strava, whoop_data, weather_data, whoop_activity=whoop_activity
     )
+
+    # 6. Write to Supabase (non-fatal)
+    try:
+        run_id = db.upsert_run(date, "screenshots", strava, whoop_data)
+        if whoop_activity:
+            db.upsert_whoop_activity(run_id, whoop_activity)
+        if weather_data:
+            db.upsert_weather(run_id, weather_data)
+        db.upsert_report(run_id, report_path.read_text())
+        log.info("DB writes complete for run %s", run_id)
+    except Exception as exc:
+        log.warning("DB write failed (non-fatal): %s", exc)
 
     return report_path
 
