@@ -16,6 +16,7 @@ Fields:
 - calories_kcal: calories burned as an integer, or null
 - avg_cadence_spm: average cadence in steps per minute as an integer, or null
 - title: run name or title shown in the app, or null
+- description: any user-written description or note visible below the title, or null
 - location: city, neighbourhood, or route name visible in the app, or null
 - splits: array of per-km or per-mile split objects visible in the screenshots. Each object:
   - km: split number as an integer
